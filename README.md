@@ -1,58 +1,71 @@
-﻿# 黑马点评 · AI 客服增强版
+﻿# 接入 AI 客服的二手交易与分享社交平台
 
-基于 Spring Boot 3 + LangChain4j 的点评类社交平台后端，在黑马点评原始业务（商铺浏览、优惠券秒杀、探店博客、关注 feed）基础上，集成了 **AI 智能客服** 能力，支持流式对话、Tool Calling、RAG 知识检索和会话记忆隔离。
+> 前后端分离式二手交易社交平台，涵盖用户端、商家端、管理端三大模块。聚焦高并发秒杀、缓存一致性、分布式场景问题解决，通过 Redis 适配多元业务，保障平台高并发、高可用稳定运行。集成 LangChain4j AI 智能客服，支持 SSE 流式对话、Tool Calling 工具调用、RAG 语义检索与会话记忆隔离。
 
 ## 技术栈
 
 | 层面 | 技术选型 |
 |------|----------|
-| 框架 | Spring Boot 3.2.4 / Java 17 |
-| ORM | MyBatis-Plus 3.5.5 |
-| 缓存 | Redis 6379（缓存/分布式锁）+ Redis Stack 6380（向量库） |
-| 分布式锁 | Redisson 3.20.1 |
+| 后端框架 | Spring Boot 3.2 / Java 17 |
+| ORM | MyBatis-Plus 3.5 |
+| 缓存 | Redis（缓存/分布式锁/会话共享）+ Redis Stack（向量库） |
+| 分布式锁 | Redisson 3.20（看门狗续期） |
+| 数据库 | MySQL 8.0 |
 | AI 框架 | LangChain4j 1.18（OpenAI 兼容接口 + DashScope Embedding） |
-| LLM | 通义千问 qwen-plus（OpenAI 兼容模式） |
-| Embedding | DashScope text-embedding-v4（1024 维） |
+| LLM | 通义千问 qwen-plus |
 | 流式输出 | Reactor Flux（SSE） |
 | API 文档 | Knife4j 4.4（OpenAPI 3） |
-| 工具库 | Hutool 5.8 |
+| 开发工具 | Docker、IntelliJ IDEA、DataGrip、Maven、Apifox、Nginx |
 
-## 核心功能
+## 功能架构
 
-### 原始业务模块
+### 三大业务端
 
-- **用户系统**：短信登录、JWT Token 刷新、Redis Session
-- **商铺系统**：按类型浏览、按距离排序、详情查询
-- **优惠券秒杀**：Redis 分布式锁 + Lua 脚本保证原子性、异步下单（Stream 消费队列）
-- **探店博客**：发布、点赞、关注 Feed 流（Redis Sorted Set 滚动分页）
-- **关注系统**：共同关注、关注推送
+- **用户端**：浏览商品、搜索卖家店铺、参与秒杀、发布分享博文、关注与 Feed 流、AI 客服咨询
+- **商家端**：店铺管理、商品上架、优惠券发布、自提预约管理、订单处理
+- **管理端**：用户管理、内容审核、举报处理、AI 客服知识库初始化
 
-### AI 智能客服模块
+### 核心模块
 
-- **流式对话**：SSE 流式输出，前端逐字显示
-- **RAG 知识检索**：探店 Blog 向量化存入 Redis Stack，对话时自动召回相关测评
-- **Tool Calling**：LLM 自主调用工具获取结构化数据
-- **会话隔离**：按 userId:sessionId 隔离，不同用户/会话互不串扰
-- **双层记忆**：Redis（热数据）+ MySQL（冷数据），token 溢出自动裁剪
+#### 1. AI 智能客服
 
-## 工具调用
+基于 LangChain4j 搭建 SSE 流式对话客服，LLM 自主分类用户意图并路由：
 
-| 工具 | 类型 | 说明 |
-|------|------|------|
-| queryShopById | 查询 | 按商铺 ID 查询详情 |
-| queryShopsByType | 查询 | 按类型查询商铺列表（支持距离排序） |
-| queryShopByName | 查询 | 按名称模糊搜索商铺 |
-| queryVoucherOfShop | 查询 | 查询商铺可用优惠券 |
-| eserveShop | 写入 | 商铺预约（自动从会话获取 userId） |
-| submitReport | 写入 | 提交举报（博客/评论/商家） |
+- **意图路由**：System Prompt 中构建 7 类意图分类规则（闲聊、商品查询、店铺搜索、优惠券咨询、自提预约、举报投诉、兜底），引导 LLM 自主识别并路由至 RAG 知识检索或 Tool Calling 工具
+- **Tool Calling**：注册 6 个工具方法，覆盖卖家店铺查询、名称模糊搜索、按类型筛选、优惠券查询、自提预约、举报投诉等业务场景，LLM 自主决策调用时机与参数
+- **反幻觉约束**：System Prompt 内置 6 条硬规则，禁止编造店铺信息/操作结果，要求预约前必须先通过工具获取真实店铺 ID，注入实时系统时间防止 LLM 时间认知偏差
+- **会话隔离**：按 userId:sessionId 隔离，通过 @ToolMemoryId 跨 Reactor 异步线程传递用户身份，复用 Service 层越权校验
+
+#### 2. 会话记忆与语义检索
+
+- **Token 控制**：采用 jtokkit BPE 分词算法精确估算 token 数量，超出上限时自动裁剪最早消息
+- **双层存储**：Redis 写入热数据（低延迟读写），MySQL 通过自定义有界 IO 线程池异步落库（冷数据持久化），实现读写延迟可控与存储量可控
+- **语义检索**：Docker 部署 Redis Stack 向量库，将用户分享博文向量化存储，对话时召回 Top-3 测评原文交由 LLM 生成带依据的商家推荐，解决 SQL 查询无法语义匹配的痛点
+
+#### 3. 分布式认证
+
+- 采用 Redis 替代传统 Session 实现集群环境下的会话共享
+- 定义双层权限拦截器：第一层刷新 Token 有效期（所有请求），第二层校验登录态与权限（核心接口）
+- 解决集群环境下登录状态不一致、权限混乱等问题
+
+#### 4. 缓存体系优化
+
+- 基于 Cache Aside 缓存模式优化商品、博文等高频查询接口
+- 使用 Redisson 读写锁解决缓存与数据库数据一致性问题
+- 针对性落地缓存穿透（空值缓存）、击穿（互斥锁）、雪崩（随机 TTL）全套解决方案
+
+#### 5. 高并发秒杀
+
+- 采用 Redis + Lua 脚本完成秒杀资格原子性校验，杜绝商品超卖问题
+- 依托 Redisson 分布式锁结合看门狗续期机制实现业务防重与一人一单规则
+- 异步下单：Redis Stream 作为消息队列，后台线程消费处理订单落库
 
 ## 项目结构
 
-` 
+```
 com.hmdp
-├── ai/                  # AI 多 Agent（意图分类、商铺/订单/举报 Agent）
-├── cache/               # Redis 缓存工具类
-├── config/              # 配置类（ChatMemory、RAG、Redisson、Knife4j、MVC）
+├── ai/                  # AI Agent（意图分类、业务路由）
+├── config/              # 配置类（ChatMemory、RAG、Redisson、MVC、Knife4j）
 ├── controller/          # 接口层（含 AiChatController 流式对话入口）
 ├── dto/                 # 数据传输对象
 ├── entity/              # 实体类
@@ -61,10 +74,11 @@ com.hmdp
 ├── repository/          # 双层 ChatMemoryStore（Redis + MySQL）
 ├── service/             # 服务层（含 AiChatService @AiService 声明）
 │   └── impl/
-├── task/                # 定时任务（记忆清理）
-├── tool/                # Tool Calling 工具类（ShopTools、ReportTools 等）
+├── tool/                # Tool Calling 工具类
+├── task/                # 定时任务
+├── cache/               # Redis 缓存工具类
 └── utils/               # 工具类（UserHolder、RedisIdWorker、LoginInterceptor 等）
-` 
+```
 
 ## 快速开始
 
@@ -72,105 +86,52 @@ com.hmdp
 
 - JDK 17+
 - MySQL 8.0+
-- Redis 6+（普通 Redis，端口 6379）
-- Redis Stack（向量库，端口 6380，Docker 部署）
+- Redis 6+（端口 6379）
+- Redis Stack（端口 6380，Docker 部署）
 - Maven 3.9+
 
 ### 1. 初始化数据库
 
-`sql
+```sql
 CREATE DATABASE hmdianping DEFAULT CHARACTER SET utf8mb4;
-`
+```
 
 执行 SQL 脚本：
 
-`ash
-# 主业务表
+```bash
 mysql -u root -p hmdianping < src/main/resources/db/hmdp.sql
-
-# AI 客服扩展表（聊天记忆、预约、举报等）
 mysql -u root -p hmdianping < src/main/resources/db/customer_service_upgrade.sql
-`
+```
 
-### 2. 启动 Redis
+### 2. 启动 Redis 与 Redis Stack
 
-`ash
-# 普通 Redis（缓存/锁）
+```bash
+# 普通 Redis（缓存/锁/会话）
 redis-server --port 6379
 
 # Redis Stack（向量库）
 docker run -d --name redis-stack -p 6380:6379 redis/redis-stack:latest
-`
+```
 
 ### 3. 配置 API Key
 
-编辑 src/main/resources/application.yaml，替换 DashScope API Key：
-
-`yaml
-langchain4j:
-  open-ai:
-    chat-model:
-      api-key: 你的通义千问API-Key
-    streaming-chat-model:
-      api-key: 你的通义千问API-Key
-  community:
-    dashscope:
-      embedding-model:
-        api-key: 你的通义千问API-Key
-`
+编辑 `src/main/resources/application.yaml`，替换 DashScope API Key。
 
 ### 4. 编译启动
 
-`ash
+```bash
 mvn clean compile
 mvn spring-boot:run
-`
+```
 
 ### 5. 初始化 RAG 向量库
 
-项目启动后，调用管理端接口将 Blog 测评内容写入向量库：
+启动后调用管理端接口，将分享博文写入向量库：
 
-`ash
+```bash
 POST http://localhost:8081/chat/rag/init
-# 需登录用户 ID = 1（管理员）
-`
+```
 
-## API 一览
+## API 文档
 
-| 接口 | 方法 | 说明 |
-|------|------|------|
-| /chat/flux | POST | AI 流式对话（SSE） |
-| /chat/normal | POST | AI 普通对话（非流式） |
-| /chat/rag/init | POST | 全量初始化 RAG 向量库 |
-| /shop/{id} | GET | 查询商铺详情 |
-| /shop/type/list | GET | 商铺类型列表 |
-| /voucher/list/{shopId} | GET | 查询商铺优惠券 |
-| /voucher-order/seckill/{id} | POST | 优惠券秒杀下单 |
-| /blog/hot | GET | 热门博客 |
-| /user/code | POST | 发送短信验证码 |
-| /user/login | POST | 登录 |
-
-Swagger UI: http://localhost:8081/doc.html
-
-## 关键设计
-
-### 会话记忆隔离
-
-- Controller 生成 memoryId = userId:sessionId
-- ChatMemoryProvider 按 memoryId 获取独立 Memory
-- DualChatMemoryStore: Redis(热) + MySQL(冷)，token 超限时自动裁剪
-
-### RAG + Tool Calling 协同
-
-- **商铺推荐**：走 RAG，从 Blog 测评中语义召回，用自然语言描述推荐理由
-- **商铺精确查询**：走 Tool Calling，从数据库拿结构化字段（ID、地址、人均、评分）
-- **预约/举报**：走 Tool Calling，LLM 调用 reserveShop/submitReport 写入数据库
-
-### 反幻觉约束
-
-System Prompt 内置硬规则：
-1. 禁止编造商铺信息，所有数据来自工具返回
-2. 调用 reserveShop 前必须先通过工具获取真实商铺 ID
-3. 禁止编造操作结果（预约单号、举报单号等）
-4. 工具返回空结果时如实告知，不自行补充替代商铺
-5. 注入当前系统时间，防止 LLM 时间认知偏差
+启动后访问 Knife4j 文档：http://localhost:8081/doc.html
