@@ -1,0 +1,73 @@
+server:
+  port: 8081
+spring:
+  application:
+    name: hmdp
+  datasource:
+    driver-class-name: com.mysql.cj.jdbc.Driver
+    url: jdbc:mysql://localhost:3306/hmdianping?useSSL=false&serverTimezone=UTC&useUnicode=true&characterEncoding=utf-8
+    username: root
+    password: root
+  data:
+    redis:
+      host: 127.0.0.1
+      port: 6379
+      database: 1
+
+  jackson:
+    default-property-inclusion: non_null # JSON处理时忽略非空字段
+mybatis-plus:
+  type-aliases-package: com.hmdp.entity # 别名扫描包
+logging:
+  level:
+    com.hmdp: debug
+  pattern:
+    dateformat: mm:ss.SSS
+langchain4j:
+  open-ai:
+    chat-model:
+      base-url: https://dashscope.aliyuncs.com/compatible-mode/v1
+      api-key: sk-fd35e654e9d34ce3925801e8ab824a88
+      model-name: qwen-plus
+      log-requests: true
+      log-responses: true
+    streaming-chat-model:
+      base-url: https://dashscope.aliyuncs.com/compatible-mode/v1
+      api-key: sk-fd35e654e9d34ce3925801e8ab824a88
+      model-name: qwen-plus
+      log-requests: true
+      log-responses: true
+  community:
+    dashscope:
+      embedding-model:                    # RAG 向量化模型：text-embedding-v4（1024 维）
+        api-key: sk-fd35e654e9d34ce3925801e8ab824a88
+        model-name: text-embedding-v4
+    redis:                                # RAG 向量库：独立 Redis Stack 容器（6380 端口）
+      host: 127.0.0.1
+      port: 6380
+      index-name: blog-embedding
+      prefix: 'blog:vec:'
+      dimension: 1024                    # text-embedding-v4 默认 1024 维，必须与 embedding 模型输出严格一致
+# springdoc-openapi 配置(Knife4j 4.x 基于 OpenAPI3)
+springdoc:
+  swagger-ui:
+    path: /swagger-ui.html
+    enabled: true
+    urls:
+      - name: hmdp
+        url: /v3/api-docs
+  api-docs:
+    path: /v3/api-docs
+    enabled: true
+  group-configs:
+    - group: hmdp
+      packages-to-scan: com.hmdp.controller
+# Knife4j 4.x 增强配置
+knife4j:
+  enable: true
+  setting:
+    language: zh_cn
+  documents:
+    - group: hmdp
+      name: 黑马点评接口文档
+      locations: /v3/api-docs
